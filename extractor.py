@@ -55,6 +55,7 @@ def normalize(text):
     s = re.sub(r'№\s*', '№', s)                  # '№ 152' -> '№152'
     s = re.sub(r'(\d)\s*-\s*(\d)', r'\1-\2', s)  # '194 - 199' -> '194-199'; \1 и \2 - то, что захватили скобки
     s = re.sub(r'[a-zа-я]+', fix_mixed_word, s)  # re.sub с функцией: для каждого совпадения вызывается fix_mixed_word
+    s = re.sub(r'(\d)(?=[а-я]{2,})', r'\1 ', s)  # '374нк рф' -> '374 нк рф'; (?=...) проверяет, что дальше 2+ буквы, не забирая их
     return s.strip()
 
 
@@ -117,10 +118,68 @@ def build_index(aliases):
         by_first.setdefault(key[0], []).append(key)   # setdefault: взять список по ключу, а если его нет - создать пустой
     for first in by_first:
         by_first[first].sort(key=len, reverse=True)
-    return {'keys': keys, 'by_first': by_first}
+    return {'keys': keys, 'by_first': by_first, 'first_stems': list(by_first)}
 
 
-def find_laws(tokens, index):
+def within_one_edit(a, b):
+    # True, если строки отличаются не больше чем на одну правку: пропуск, лишняя буква, замена или перестановка соседних
+    if abs(len(a) - len(b)) > 1:
+        return False
+    i = 0
+    while i < len(a) and i < len(b) and a[i] == b[i]:   # идём до первого несовпадения
+        i += 1
+    if len(a) == len(b):
+        if a[i + 1:] == b[i + 1:]:                       # замена одной буквы
+            return True
+        return a[i:i + 2] == b[i:i + 2][::-1] and a[i + 2:] == b[i + 2:]   # перестановка соседних; [::-1] разворачивает строку
+    if len(a) > len(b):
+        return a[i + 1:] == b[i:]                        # в a лишняя буква
+    return a[i:] == b[i + 1:]                            # в a пропущена буква
+
+
+def close(a, b):
+    # совпадение основ с допуском опечатки; короткие слова (нк, рф, апк, фз) и числа - только точно
+    if a == b:
+        return True
+    if len(a) < 4 or len(b) < 4 or not a.isalpha() or not b.isalpha():
+        return False
+    if within_one_edit(a, b):
+        return True
+    # опечатка в окончании мешает стеммеру отрезать его: 'жилищногг' vs 'жилищн', 'гражданскго' vs 'гражданск'
+    short, long_ = sorted([a, b], key=len)       # sorted по длине: сначала короткая строка
+    return len(short) >= 5 and long_.startswith(short) and len(long_) - len(short) <= 3
+
+
+def fuzzy_match(stems, i, index):
+    # ищем название с опечатками, начинающееся со слова i; допускаем не больше одного неточного слова
+    best = None
+    for first in index['first_stems']:
+        if not close(first, stems[i]):
+            continue
+        for key in index['by_first'][first]:
+            if best is not None and len(key) <= len(best):
+                break                                    # ключи от длинных к коротким: короче лучшего не ищем
+            if i + len(key) > len(stems):
+                continue
+            inexact = 0
+            ok = True
+            for j in range(len(key)):
+                if key[j] == stems[i + j]:
+                    continue
+                if close(key[j], stems[i + j]):
+                    inexact += 1
+                    if inexact > 1:
+                        ok = False
+                        break
+                else:
+                    ok = False
+                    break
+            if ok and inexact == 1 and len(key) >= 2:    # одно неточное слово и название минимум из двух слов
+                best = key
+    return best
+
+
+def find_laws(tokens, index, fuzzy_starts=None):
     # идём по словам текста; в каждой позиции пробуем самое длинное название, которое здесь начинается
     words = []                                    # (основа, начало, конец, стоит ли перед словом кавычка)
     prev_quote = False
@@ -143,6 +202,12 @@ def find_laws(tokens, index):
                     continue                                     # голое название без кавычек в тексте не считаем
                 match = (key, info)
                 break                                            # ключи отсортированы, первый подошедший - самый длинный
+        if match is None and fuzzy_starts and words[i][1] in fuzzy_starts:
+            key = fuzzy_match(stems, i, index)           # опечатка в названии сразу после «ст. N»
+            if key is not None:
+                info = index['keys'][key]
+                if not (info['needs_quote'] and not words[i][3]):
+                    match = (key, info)
         if match is None:
             i += 1
             continue
@@ -174,12 +239,13 @@ B = r'(?<![а-я0-9.])'                                         # маркер �
 # Граница после слова запрещает принять его остаток за буквенное значение.
 WORD_END = r'(?![a-zа-я_])'
 POINT_ENDING = r'(?:а|у|ом|е|ы|ов|ам|ами|ах)?'
-M_SUB = r'(?:подпункт' + POINT_ENDING + WORD_END + r'|подп\.|пп\.)'
+# пп(?=\s*\d), п(?=\s*\d), ч(?=\s*\d), ст(?=\s*\d): маркер без точки, если сразу за ним число («ст 5»)
+M_SUB = r'(?:подпункт' + POINT_ENDING + WORD_END + r'|подп\.|пп\.|пп(?=\s*\d))'
 M_POINT = (r'(?:пунк?т' + POINT_ENDING + WORD_END
-           + r'|п\.\s?п\.|п\.|част(?:ь|и|ью|ей|ям|ями|ях)' + WORD_END + r'|ч\.)')
+           + r'|п\.\s?п\.|п\.|п(?=\s*\d)|част(?:ь|и|ью|ей|ям|ями|ях)' + WORD_END + r'|ч\.|ч(?=\s*\d))')
 # пунк?т сохраняет поддержку опечатки «пунта»; стат. — сокращение «статья».
 M_ART = (r'(?:ст\.\s?ст\.|стат\.|(?:стать(?:я|и|е|ю|ей|ею|ям|ями|ях)|статей)'
-         + WORD_END + r'|ст\.)')
+         + WORD_END + r'|ст\.|ст(?=\s*\d))')
 LVL = r'\s*,?\s*(?:в\s+)?'                                    # между уровнями: пробел, запятая, предлог «в»
 
 CHAIN = (
@@ -194,6 +260,18 @@ FILL_WORD = (r'(?:федеральн[а-я]*|закон[а-я]*|фз|рф|код
 LAST_CHAIN_RE = re.compile(CHAIN + r'(?:\s+' + FILL_WORD + r')*\s*"?\s*$')   # цепочка, прижатая к концу левого текста
 PREV_CHAIN_RE = re.compile(CHAIN + r'\s*$')                                  # предыдущая цепочка («п. 2 ст. 450 и ...»)
 JOINER_RE = re.compile(r'(?:\s*,\s*|\s+и\s+|\s+а также\s+)$')                # чем соединены цепочки перед одним актом
+
+
+CHAIN_FIND_RE = re.compile(CHAIN + r'(?:\s+' + FILL_WORD + r')*\s*"?\s*')    # цепочка в любом месте текста
+
+
+def chain_ends(norm_text):
+    # позиции, где сразу после цепочки «пп./п./ст. ...» должно начинаться название акта
+    ends = set()
+    for m in CHAIN_FIND_RE.finditer(norm_text):
+        if m.group('art') or m.group('pt') or m.group('sub'):   # пустые совпадения (без единого уровня) пропускаем
+            ends.add(m.end())
+    return ends
 
 
 def split_values(list_text):
@@ -246,7 +324,7 @@ def parse_chains(left_text):
 
 def extract_links(text, index):
     norm = normalize(text)
-    laws = find_laws(tokenize(norm), index)
+    laws = find_laws(tokenize(norm), index, fuzzy_starts=chain_ends(norm))
     links = []
     prev_end = 0
     for law_id, start, end in laws:
