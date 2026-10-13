@@ -141,3 +141,50 @@ def test_supported_marker_forms(index, markers, expected):
 
 def test_compact_abbreviated_chain(index):
     assert run('пп.1 п.2 ст.5 НК РФ', index) == [(15, '5', '2', '1')]
+
+
+# ---------- добавлено после слепой проверки ----------
+
+def test_hyphenated_law_name(index):
+    # составное слово через дефис: «Уголовно-процессуального» должно совпасть с «Уголовно-процессуальный»
+    assert run('согласно ч. 2 ст. 46 Уголовно-процессуального кодекса Российской Федерации', index) == [(12, '46', '2', None)]
+
+
+def test_pp_dot_means_points(index):
+    # «п.п.» - пункты (решение 20), а не подпункты
+    assert run('в нарушение п.п. 4,5 ст. 18 ГК РФ', index) == [(5, '18', '4', None), (5, '18', '5', None)]
+
+
+def test_letter_with_bracket(index):
+    assert run('на основании пп. в), г) п. 1 ст. 7 ГПК РФ', index) == [(6, '7', '1', 'в'), (6, '7', '1', 'г')]
+
+
+def test_stat_abbreviation(index):
+    assert run('по смыслу стат. 10 ГК РФ', index) == [(5, '10', None, None)]
+
+
+# ---------- устойчивость к небрежной записи (зашумлённая выборка) ----------
+
+def test_typo_in_law_name(index):
+    # опечатка в названии закона сразу после «ст. N» исправляется нечётким сравнением
+    assert run('согласно ст. 275 Налогвого кодекса Российской Федерации', index) == [(15, '275', None, None)]
+
+
+def test_typo_breaks_ending(index):
+    # опечатка в окончании мешает стеммеру: 'жилищногго' не превращается в 'жилищн'
+    assert run('определен пунктом 4 статьи 36 Жилищногго кодекса Российской Федерации', index) == [(7, '36', '4', None)]
+
+
+def test_marker_without_dot(index):
+    assert run('согласно ст 105 УК РФ и п 3 ст 158 УК РФ', index) == [(13, '105', None, None), (13, '158', '3', None)]
+
+
+def test_number_glued_to_law(index):
+    assert run('В соответствии с пп. 1 п. 1 ст. 374НК РФ объектами', index) == [(15, '374', '1', '1')]
+
+
+def test_fuzzy_does_not_invent_laws(index):
+    # «Трудового договора», «Устава» - не законы; нечёткое сравнение не должно их подхватить
+    assert run('ч. 2 ст. 5 Трудового договора', index) == []
+    assert run('согласно ст. 5 Устава организации', index) == []
+    assert run('п. 1 ст. 2 Жилищного фонда', index) == []
