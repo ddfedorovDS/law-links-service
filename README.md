@@ -17,7 +17,9 @@ curl -X POST "http://localhost:8978/detect" \
      -d '{"text": "Согласно статье 23 Налогового кодекса и ст. 145 Гражданского кодекса"}'
 ```
 
-Ответ:
+Команда `curl` записана для bash (Linux, macOS, Git Bash). В Windows PowerShell перенос строки `\` и кавычки работают иначе, там запрос удобнее отправить через Swagger (см. ниже).
+
+Ответ (сервис возвращает его одной строкой, здесь отформатирован для чтения):
 
 ```json
 {"links": [
@@ -45,7 +47,7 @@ pip install -r requirements.txt
 python main.py                    # сервис на http://localhost:8978
 ```
 
-Требуется Python 3.10 или новее (в образе используется 3.12).
+Требуется Python 3.10 или новее (в образе используется 3.12; проверено на 3.10 и 3.13). На Linux и macOS вместо `python` может понадобиться `python3`. Если Windows PowerShell при активации пишет, что выполнение сценариев отключено, один раз выполните `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned`.
 
 ## Как устроен алгоритм
 
