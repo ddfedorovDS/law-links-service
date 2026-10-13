@@ -107,3 +107,37 @@ def test_title_without_chain_is_not_link(index):
 def test_duplicates_kept(index):
     text = 'установленном для ст. 105 УК РФ. Однако, в соответствии со ст. 105 УК РФ, убийство'
     assert run(text, index) == [(13, '105', None, None), (13, '105', None, None)]
+
+
+@pytest.mark.parametrize('word', [
+    'статус', 'статистика', 'статуя', 'статичный',
+    'частично', 'частный', 'частота', 'пунктир', 'подпунктир',
+])
+def test_ordinary_words_are_not_citation_markers(index, word):
+    assert run(f'{word} 5 НК РФ', index) == []
+    assert run(f'{word} НК РФ', index) == []
+
+
+def test_ordinary_word_does_not_add_a_point_to_valid_article(index):
+    assert run('частично 2 ст. 5 НК РФ', index) == [(15, '5', None, None)]
+
+
+@pytest.mark.parametrize(('markers', 'expected'), [
+    ('статья статьи статье статью статьей статьею статей статьям статьями статьях',
+     (15, '5', None, None)),
+    ('часть части частью частей частям частями частях', (15, None, '5', None)),
+    ('пункт пункта пункту пунктом пункте пункты пунктов пунктам пунктами пунктах',
+     (15, None, '5', None)),
+    ('подпункт подпункта подпункту подпунктом подпункте подпункты подпунктов подпунктам подпунктами подпунктах',
+     (15, None, None, '5')),
+    ('ст. ст.ст. стат.', (15, '5', None, None)),
+    ('п. п.п. ч.', (15, None, '5', None)),
+    ('пп. подп.', (15, None, None, '5')),
+])
+def test_supported_marker_forms(index, markers, expected):
+    for marker in markers.split():
+        assert run(f'{marker} 5 НК РФ', index) == [expected], marker
+
+
+def test_compact_abbreviated_chain(index):
+    assert run('пп.1 п.2 ст.5 НК РФ', index) == [(15, '5', '2', '1')]
